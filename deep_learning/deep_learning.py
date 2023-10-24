@@ -34,11 +34,23 @@ def dataframe_to_dataset(df):
     labels_str = df.pop('Target')
     labels = pd.get_dummies(labels_str)
     ds = tf.data.Dataset.from_tensor_slices((dict(df), labels))
-    df = ds.shuffle(buffer_size=len(df))
+    #ds = ds.shuffle(buffer_size=len(df))
     return ds
 
+def dataframe_to_dataset_balanced(df):
+    df = df.copy()
+    labels_str = df.pop('Target')
+    labels = pd.get_dummies(labels_str)
+    ds1 = tf.data.Dataset.from_tensor_slices((dict(df[labels_str == "Enrolled"]), labels[labels_str=="Enrolled"]))
+    ds2 = tf.data.Dataset.from_tensor_slices((dict(df[labels_str == "Dropout"]), labels[labels_str=="Dropout"]))
+    ds3 = tf.data.Dataset.from_tensor_slices((dict(df[labels_str == "Graduate"]), labels[labels_str=="Graduate"]))
+
+    resampled = tf.data.Dataset.sample_from_datasets([ds1, ds2, ds3], weights=[0.33, 0.33, 0.33])
+    return resampled
+
 ds_val = dataframe_to_dataset(data_val)
-ds_train = dataframe_to_dataset(data_train)
+#ds_train = dataframe_to_dataset(data_train)
+ds_train = dataframe_to_dataset_balanced(data_train)
 
 ds_val = ds_val.batch(64)
 ds_train = ds_train.batch(64)
@@ -96,7 +108,6 @@ feature_space = FeatureSpace(
 ds_train_no_labels = ds_train.map(lambda x, _:x)
 feature_space.adapt(ds_train_no_labels)
 
-
 ds_train_preprocessed = ds_train.map(
     lambda x, y: (feature_space(x), y), num_parallel_calls=tf.data.AUTOTUNE
 )
@@ -116,6 +127,14 @@ x = keras.layers.Dense(32, activation="relu")(x)
 x = keras.layers.Dropout(0.5)(x)
 predictions = keras.layers.Dense(3, activation="softmax")(x)
 
+# class weights are only valuable if we want to move precision/recall
+# it basically assigns more samples to the underrepresented class
+from sklearn.utils.class_weight import compute_class_weight
+
+y_integers = np.argmax(np.concatenate([y for _,y in ds_train], axis=0), axis=1)
+class_weights = compute_class_weight(class_weight='balanced', classes=np.unique(y_integers), y=y_integers)
+d_class_weights = dict(enumerate(class_weights))
+
 model = keras.Model(inputs=encoded_features, outputs=predictions)
 model.compile(
     optimizer="adam", loss="binary_crossentropy", 
@@ -127,7 +146,11 @@ model.compile(
 )
 
 history = model.fit(
-    ds_train_preprocessed, epochs=15, validation_data=ds_val_preprocessed, verbose=1
+    ds_train_preprocessed, 
+    epochs=20, 
+    validation_data=ds_val_preprocessed, 
+    verbose=1,
+    class_weight=d_class_weights
 )
 
 def plot_metrics(history):
@@ -138,12 +161,11 @@ def plot_metrics(history):
     plt.legend()
     plt.show()
 
-
 def plot_confusion(ds_val):
     predictions = np.argmax(model.predict(ds_val_preprocessed), axis=1)
     trues = np.argmax(np.concatenate([y for _,y in ds_val], axis=0), axis=1)
     confusion = confusion_matrix(predictions, trues) 
-    sns.heatmap(confusion, annot=True, fmt="d")
+    sns.heatmap(confusion, annot=True)
     plt.show()
 
 plot_metrics(history)
