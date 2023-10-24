@@ -7,6 +7,12 @@ import pandas as pd
 import tensorflow as tf
 from tensorflow import keras
 from keras.utils import FeatureSpace
+import matplotlib.pyplot as plt
+from sklearn.metrics import confusion_matrix
+import numpy as np
+import seaborn as sns
+
+keras.utils.set_random_seed(42)
 
 print("Reading data...")
 
@@ -34,8 +40,8 @@ def dataframe_to_dataset(df):
 ds_val = dataframe_to_dataset(data_val)
 ds_train = dataframe_to_dataset(data_train)
 
-ds_val = ds_val.batch(32)
-ds_train = ds_train.batch(32)
+ds_val = ds_val.batch(64)
+ds_train = ds_train.batch(64)
 
 # ideas for combinations (either by feature space or by hand)
 # difference "curricular units credited - enrolled
@@ -112,9 +118,33 @@ predictions = keras.layers.Dense(3, activation="softmax")(x)
 
 model = keras.Model(inputs=encoded_features, outputs=predictions)
 model.compile(
-    optimizer="adam", loss="binary_crossentropy", metrics=["accuracy"]
+    optimizer="adam", loss="binary_crossentropy", 
+        metrics=[
+            "accuracy",
+            keras.metrics.Precision(name='precision'),
+            keras.metrics.Recall(name='recall')
+        ]
 )
 
 history = model.fit(
-    ds_train_preprocessed, epochs=10, validation_data=ds_val_preprocessed, verbose=2
+    ds_train_preprocessed, epochs=15, validation_data=ds_val_preprocessed, verbose=1
 )
+
+def plot_metrics(history):
+    plt.plot(history.epoch, history.history['val_accuracy'], label="Accuracy")
+    plt.plot(history.epoch, history.history['val_precision'], label="Precision")
+    plt.plot(history.epoch, history.history['val_recall'], label="Recall")
+    plt.ylim([0.6,1])
+    plt.legend()
+    plt.show()
+
+
+def plot_confusion(ds_val):
+    predictions = np.argmax(model.predict(ds_val_preprocessed), axis=1)
+    trues = np.argmax(np.concatenate([y for _,y in ds_val], axis=0), axis=1)
+    confusion = confusion_matrix(predictions, trues) 
+    sns.heatmap(confusion, annot=True, fmt="d")
+    plt.show()
+
+plot_metrics(history)
+plot_confusion(ds_val)
